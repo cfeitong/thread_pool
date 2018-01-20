@@ -13,6 +13,7 @@ struct SharedData {
     receiver: Mutex<mpsc::Receiver<Task>>,
     n_threads: AtomicUsize,
     n_active: AtomicUsize,
+    n_queued: AtomicUsize,
 }
 
 pub struct ThreadPool {
@@ -29,6 +30,7 @@ impl ThreadPool {
                 receiver: Mutex::new(rx),
                 n_threads: AtomicUsize::new(0),
                 n_active: AtomicUsize::new(0), 
+                n_queued: AtomicUsize::new(0), 
             }
         );
 
@@ -45,6 +47,7 @@ impl ThreadPool {
                         rx.recv()
                     };
 
+
                     let task = match msg {
                         Ok(task) => task,
                         _ => break,
@@ -54,6 +57,7 @@ impl ThreadPool {
 
                     task();
 
+                    data.n_queued.fetch_sub(1, Ordering::SeqCst);
                     data.n_active.fetch_sub(1, Ordering::SeqCst);
 
                     if data.n_active.load(Ordering::SeqCst) == 0 {
@@ -76,14 +80,20 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static
     {
         let task: Task = box func;
+        self.data.n_queued.fetch_add(1, Ordering::SeqCst);
         self.sender.send(task).expect("fail to send task");
     }
 
     pub fn join(&self) {
-        if self.data.n_active.load(Ordering::SeqCst) == 0 { return; }
-        let &(ref lock, ref cvar) = &self.data.empty;
+        let data = &self.data;
+        if data.n_active.load(Ordering::SeqCst) == 0 &&
+           data.n_queued.load(Ordering::SeqCst) == 0 {
+            return; 
+        }
+        let &(ref lock, ref cvar) = &data.empty;
         let mut lock = lock.lock().unwrap();
-        while self.data.n_active.load(Ordering::SeqCst) != 0 {
+        while data.n_active.load(Ordering::SeqCst) != 0 ||
+              data.n_queued.load(Ordering::SeqCst) != 0 {
             lock = cvar.wait(lock).unwrap();
         }
     }
