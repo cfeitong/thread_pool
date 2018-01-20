@@ -1,6 +1,6 @@
 #![feature(nll, box_syntax, iterator_step_by, fnbox)]
 
-use std::sync::{Condvar, Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
@@ -24,15 +24,13 @@ pub struct ThreadPool {
 impl ThreadPool {
     pub fn new(n_threads: usize) -> Self {
         let (tx, rx) = mpsc::channel::<Task>();
-        let data = Arc::new(
-            SharedData {
-                empty: (Mutex::new(false), Condvar::new()),
-                receiver: Mutex::new(rx),
-                n_threads: AtomicUsize::new(0),
-                n_active: AtomicUsize::new(0), 
-                n_queued: AtomicUsize::new(0), 
-            }
-        );
+        let data = Arc::new(SharedData {
+            empty: (Mutex::new(false), Condvar::new()),
+            receiver: Mutex::new(rx),
+            n_threads: AtomicUsize::new(0),
+            n_active: AtomicUsize::new(0),
+            n_queued: AtomicUsize::new(0),
+        });
 
         for _ in 0..n_threads {
             let data = data.clone();
@@ -41,9 +39,9 @@ impl ThreadPool {
 
                 loop {
                     let msg = {
-                        let rx = data.receiver.lock().expect(
-                            "working thread fails to lock receiver"
-                        );
+                        let rx = data.receiver
+                            .lock()
+                            .expect("working thread fails to lock receiver");
                         rx.recv()
                     };
 
@@ -64,20 +62,18 @@ impl ThreadPool {
                         let &(ref _lock, ref cvar) = &data.empty;
                         cvar.notify_all();
                     }
-
                 }
-
             });
-        };
+        }
         ThreadPool {
             sender: tx,
             data: data,
         }
     }
 
-    pub fn submit<F>(&self, func: F) 
+    pub fn submit<F>(&self, func: F)
     where
-        F: FnOnce() + Send + 'static
+        F: FnOnce() + Send + 'static,
     {
         let task: Task = box func;
         self.data.n_queued.fetch_add(1, Ordering::SeqCst);
@@ -86,14 +82,13 @@ impl ThreadPool {
 
     pub fn join(&self) {
         let data = &self.data;
-        if data.n_active.load(Ordering::SeqCst) == 0 &&
-           data.n_queued.load(Ordering::SeqCst) == 0 {
-            return; 
+        if data.n_active.load(Ordering::SeqCst) == 0 && data.n_queued.load(Ordering::SeqCst) == 0 {
+            return;
         }
         let &(ref lock, ref cvar) = &data.empty;
         let mut lock = lock.lock().unwrap();
-        while data.n_active.load(Ordering::SeqCst) != 0 ||
-              data.n_queued.load(Ordering::SeqCst) != 0 {
+        while data.n_active.load(Ordering::SeqCst) != 0 || data.n_queued.load(Ordering::SeqCst) != 0
+        {
             lock = cvar.wait(lock).unwrap();
         }
     }
@@ -117,8 +112,15 @@ mod tests {
         let v: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
         let v1 = v.clone();
         let v2 = v.clone();
-        pool.submit(move || { std::thread::sleep(Duration::from_millis(100)); let mut v = v1.lock().unwrap(); v.push(1); });
-        pool.submit(move || { let mut v = v2.lock().unwrap(); v.push(2); });
+        pool.submit(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            let mut v = v1.lock().unwrap();
+            v.push(1);
+        });
+        pool.submit(move || {
+            let mut v = v2.lock().unwrap();
+            v.push(2);
+        });
         pool.join();
         let pv = v.lock().unwrap().clone();
         assert_eq!(pv, vec![2, 1])
@@ -131,7 +133,7 @@ mod tests {
         for i in 0..10 {
             let tv = v.clone();
             pool.submit(move || {
-                std::thread::sleep(Duration::from_millis((10-i) * 40));
+                std::thread::sleep(Duration::from_millis((10 - i) * 40));
                 let mut v = tv.lock().unwrap();
                 v.push(i as i64);
             });
