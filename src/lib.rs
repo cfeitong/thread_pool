@@ -57,7 +57,8 @@ impl ThreadPool {
                     data.n_active.fetch_sub(1, Ordering::SeqCst);
 
                     if data.n_active.load(Ordering::SeqCst) == 0 {
-                        data.empty.1.notify_all();
+                        let &(ref _lock, ref cvar) = &data.empty;
+                        cvar.notify_all();
                     }
 
                 }
@@ -80,9 +81,10 @@ impl ThreadPool {
 
     pub fn join(&self) {
         if self.data.n_active.load(Ordering::SeqCst) == 0 { return; }
-        let mut lock = self.data.empty.0.lock().unwrap();
+        let &(ref lock, ref cvar) = &self.data.empty;
+        let mut lock = lock.lock().unwrap();
         while self.data.n_active.load(Ordering::SeqCst) != 0 {
-            lock = self.data.empty.1.wait(lock).unwrap();
+            lock = cvar.wait(lock).unwrap();
         }
     }
 }
